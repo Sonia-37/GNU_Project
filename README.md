@@ -7,3 +7,6 @@ Stworzenie gry labirynt, w której można zbierać punkty. Gra składa się z 3 
 ## Twórcy projektu
 Agata Leszczak
 Zofia Sikorska
+
+## Link do LaTeX 
+https://www.overleaf.com/project/68418dd16f4fa36a85adefcc
