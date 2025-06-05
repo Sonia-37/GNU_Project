@@ -1,14 +1,19 @@
 #!/bin/bash
 
+# Get script directory for proper image paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WIN_IMAGE="$SCRIPT_DIR/win_image.png"
+LOSE_IMAGE="$SCRIPT_DIR/lose_image.png"
+
 maze1=(
     "####################"
     "#....$........♥....#"
     "#.##############..#"
-    "#.$#............#..#"
+    "#$..#..........#..#"
     "#.#.##########.#..#"
-    "#.#.E.........$#..#"
-    "#.$############$..#"
-    "#.$..............#."
+    "#.#.E..........#..#"
+    "#.#############...#"
+    "#$................#."
     "#.##############.#."
     "#.#.............#.#"
     "#.#.#############.#"
@@ -69,11 +74,6 @@ maze3=(
     "P.................."
 )
 
-
-WIN_IMAGE="win_image.png"
-LOSE_IMAGE="lose_image.png"
-
-
 player_name=""
 current_level=1
 attempt=1
@@ -81,8 +81,14 @@ current_score=0
 declare -A best_times=( [1]=0 [2]=0 [3]=0 )
 declare -a level_times
 current_start_time=0
+
 per_level_file="maze_level_scores.txt"
 overall_file="maze_overall_scores.txt"
+
+# Track collected rewards
+declare -A collected_rewards
+start_row=0
+start_col=0
 
 load_level_scores() {
     if [[ -f "$per_level_file" ]]; then
@@ -93,7 +99,6 @@ load_level_scores() {
         done < "$per_level_file"
     fi
 }
-
 
 save_level_score() {
     local level=$1
@@ -121,7 +126,6 @@ save_level_score() {
     
     mv "$temp_file" "$per_level_file"
 }
-
 
 save_overall_score() {
     local total_time=$1
@@ -180,24 +184,30 @@ show_highscores() {
     echo "╚══════════════════╩══════════╩═══════════════╝"
 }
 
-# Show image function
 show_image() {
     local image_file=$1
-    if [[ -f "$image_file" ]] && command -v display &>/dev/null; then
-        display "$image_file" &
-        IMAGE_PID=$!
-        sleep 5
+    if [[ -f "$image_file" ]]; then
+        # Try various image viewers
+        if command -v xdg-open &>/dev/null; then
+            xdg-open "$image_file" >/dev/null 2>&1 &
+        elif command -v feh &>/dev/null; then
+            feh "$image_file" &
+        else
+            echo "Image display not available. See: $image_file"
+            return
+        fi
+        local IMAGE_PID=$!
+        sleep 15
         kill $IMAGE_PID 2>/dev/null
     else
-        echo "Image display not available. See: $image_file"
+        echo "Image not found: $image_file"
     fi
 }
-
 
 get_player_name() {
     clear
     echo "╔══════════════════════════════════════════════╗"
-    echo "║          🏰 MAZE RUNNER - BASH EDITION 🏰    ║"
+    echo "║       🏰 MAZE RUNNER - BASH EDITION 🏰      ║"
     echo "╚══════════════════════════════════════════════╝"
     echo ""
     read -p "Enter your name: " player_name
@@ -239,7 +249,6 @@ show_stats() {
     echo "╚══════════════════════════════════════════════╝"
 }
 
-
 find_start_position() {
     for i in "${!maze[@]}"; do
         line="${maze[$i]}"
@@ -247,15 +256,23 @@ find_start_position() {
             if [[ "${line:$j:1}" == "P" ]]; then
                 player_row=$i
                 player_col=$j
+                start_row=$i
+                start_col=$j
                 return
             fi
         done
     done
     player_row=19
     player_col=0
+    start_row=19
+    start_col=0
 }
 
 set_current_maze() {
+    # Reset collected rewards
+    unset collected_rewards
+    declare -gA collected_rewards
+    
     case $current_level in
         1) maze=("${maze1[@]}") ;;
         2) maze=("${maze2[@]}") ;;
@@ -277,14 +294,8 @@ move_player() {
         local target_char="${maze[$new_row]:$new_col:1}"
         
         if [[ $target_char == "E" ]]; then
-            local current_row="${maze[$player_row]}"
-            maze[$player_row]="${current_row:0:$player_col}.${current_row:$((player_col+1))}"
-            
             player_row=$new_row
             player_col=$new_col
-            
-            current_row="${maze[$player_row]}"
-            maze[$player_row]="${current_row:0:$player_col}P${current_row:$((player_col+1))}"
             
             local end_time=$(date +%s)
             local elapsed=$((end_time - current_start_time))
@@ -345,20 +356,19 @@ move_player() {
         fi
         
         if [[ $target_char != "#" ]]; then
-            if [[ $target_char == "$" ]]; then
-                current_score=$((current_score + 1))
-            elif [[ $target_char == "♥" ]]; then
-                current_score=$((current_score + 5))
+            if [[ $target_char == "$" || $target_char == "♥" ]]; then
+                if [[ -z "${collected_rewards["$new_row,$new_col"]}" ]]; then
+                    collected_rewards["$new_row,$new_col"]=1
+                    if [[ $target_char == "$" ]]; then
+                        current_score=$((current_score + 1))
+                    elif [[ $target_char == "♥" ]]; then
+                        current_score=$((current_score + 5))
+                    fi
+                fi
             fi
-            
-            local current_row="${maze[$player_row]}"
-            maze[$player_row]="${current_row:0:$player_col}.${current_row:$((player_col+1))}"
             
             player_row=$new_row
             player_col=$new_col
-            
-            current_row="${maze[$player_row]}"
-            maze[$player_row]="${current_row:0:$player_col}P${current_row:$((player_col+1))}"
         fi
     fi
     return 0
@@ -368,18 +378,53 @@ display_maze() {
     clear
     show_stats
     
-    echo "╔══════════════════════════════════════╗"
-    for i in "${!maze[@]}"; do
-        line="${maze[$i]}"
-        line="${line//#/█}"
-        line="${line//$/💰}"
-        line="${line//♥/💖}"
-        printf "║%-30s║\n" "$line"
+    printf "╔"
+    for ((j=0; j<20; j++)); do
+        printf "═"
     done
-    echo "╚══════════════════════════════════════╝"
+    printf "╗\n"
+    
+    for ((i=0; i<20; i++)); do
+        printf "║"
+        for ((j=0; j<20; j++)); do
+            char="${maze[$i]:$j:1}"
+            if (( i == player_row && j == player_col )); then
+                printf "P"
+            else
+                if (( i == start_row && j == start_col )); then
+                    printf "."
+                else
+                    if [[ -n "${collected_rewards["$i,$j"]}" ]]; then
+                        if [[ "$char" == "$" || "$char" == "♥" ]]; then
+                            printf "."
+                        else
+                            if [[ "$char" == "#" ]]; then
+                                printf "█"
+                            else
+                                printf "%s" "$char"
+                            fi
+                        fi
+                    else
+                        if [[ "$char" == "#" ]]; then
+                            printf "█"
+                        else
+                            printf "%s" "$char"
+                        fi
+                    fi
+                fi
+            fi
+        done
+        printf "║\n"
+    done
+    
+    printf "╚"
+    for ((j=0; j<20; j++)); do
+        printf "═"
+    done
+    printf "╝\n"
     
     echo "CONTROLS: w=↑ a=← s=↓ d=→ q=quit"
-    echo "COLLECT: 💰=1pt, 💖=5pts"
+    echo "COLLECT: $=1pt, ♥=5pts"
     echo "EXIT: Find the 'E' position"
 }
 
@@ -392,11 +437,7 @@ game_over() {
     echo "╚══════════════════════════════════════════════╝"
     echo ""
     
-    if [[ -f "$LOSE_IMAGE" ]]; then
-        show_image "$LOSE_IMAGE"
-    else
-        echo "Losing image not found at: $LOSE_IMAGE"
-    fi
+    show_image "$LOSE_IMAGE"
     
     echo ""
     read -p "Play again? (y/n): " choice
@@ -408,7 +449,6 @@ game_over() {
             set_current_maze
             current_start_time=0
             ((attempt++))
-            return
             ;;
         *) 
             echo "Thanks for playing!"
@@ -420,6 +460,7 @@ game_over() {
 main_game_loop() {
     while true; do
         display_maze
+        
         read -rsn1 key
         
         case $key in
@@ -429,8 +470,14 @@ main_game_loop() {
             d) move_player 0 1 ;;
             q) game_over ;;
         esac
-        
-        [[ $? -ne 0 ]] && continue
+
+        case $? in
+            1) 
+                continue
+                ;;
+            *) 
+                ;;
+        esac
     done
 }
 
@@ -439,3 +486,4 @@ while true; do
     set_current_maze
     main_game_loop
 done
+
